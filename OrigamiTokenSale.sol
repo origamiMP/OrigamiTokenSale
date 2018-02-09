@@ -450,11 +450,9 @@ contract StandardCrowdsale {
     wallet.transfer(msg.value);
   }
 
+
   // @return true if the transaction can buy tokens
   function validPurchase() internal view returns (bool) {
-    /**bool withinPeriod = now >= startTime && now <= endTime;
-    bool nonZeroPurchase = msg.value != 0;
-    return withinPeriod && nonZeroPurchase;**/
     // Test is already done by origami token sale
     return true;
   }
@@ -556,10 +554,29 @@ contract WhitelistedCrowdsale is StandardCrowdsale, Ownable {
  */
 contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
     // hard cap of the token sale in ether
-    uint private constant HARD_CAP_IN_WEI = 15 ether;
-    uint private constant HARD_CAP_IN_WEI_PRESALE = 5 ether;
-    uint private constant MINIMUM_INVEST_IN_WEI_PRESALE = 0.1 ether;
+    uint private constant HARD_CAP_IN_WEI = 5000 ether;
+    uint private constant HARD_CAP_IN_WEI_PRESALE = 1000 ether;
+
+    // Bonus
+    uint private constant BONUS_TWENTY_AMOUNT = 200 ether;
+    uint private constant BONUS_TEN_AMOUNT = 100 ether;
+    uint private constant BONUS_FIVE_AMOUNT = 50 ether;   
     
+    // Maximum / Minimum contribution
+    uint private constant MINIMUM_INVEST_IN_WEI_PRESALE = 0.5 ether;
+    uint private constant CONTRIBUTOR_MAX_PRESALE_CONTRIBUTION = 50 ether;
+    uint private constant MINIMUM_INVEST_IN_WEI_SALE = 0.1 ether;
+    uint private constant CONTRIBUTOR_MAX_SALE_CONTRIBUTION = 500 ether;
+
+    // TEAM WALLET
+    address private constant ORIGAMI_WALLET = 0xf498ED871995C178a5815dd6D80AE60e1c5Ca2F4;
+    
+    // Token initialy distributed for the bounty
+    address private constant BOUNTY_WALLET = 0xDBA7a16383658AeDf0A28Eabf2032479F128f26D;
+    uint private constant BOUNTY_AMOUNT = 3000000e18;
+
+    // PERIOD WHEN TOKEN IS NOT TRANSFERABLE AFTER THE SALE
+    uint private constant PERIOD_AFTERSALE_NOT_TRANSFERABLE_IN_SEC = 7 days;    
 
     // Total of ORI supply
     uint private constant TOTAL_ORI_TOKEN_SUPPLY = 50000000;
@@ -567,36 +584,25 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
     // Token sale rate from ETH to ORI
     uint private constant RATE_ETH_ORI = 6000;
     
-    // Maximum Presale contribution
-    uint private constant CONTRIBUTOR_MAX_PRESALE_CONTRIBUTION = 3 ether;
-    uint private constant CONTRIBUTOR_MAX_SALE_CONTRIBUTION = 5 ether;
-    
 
-        // start and end timestamp PRESALE
+    // start and end timestamp PRESALE
     uint256 public presaleStartTime;
     uint256 public presaleEndTime;
     uint256 private presaleEndedAt;
     uint256 public preSaleWeiRaised;
-
-
+    
+    // Bonus Times
+    uint public firstWeekEndTime;
+    uint public secondWeekEndTime;  
+    
+    
     // Check wei invested by contributor on presale
     mapping(address => uint256) wei_invested_by_contributor_in_presale;
     mapping(address => uint256) wei_invested_by_contributor_in_sale;
 
-    // Token initialy distributed for the bounty (5%)
-    address private constant BOUNTY_WALLET = 0x00ab4a09CD2a05B000484F77fB6795d0A79bC5B1;
-    uint private constant BOUNTY_AMOUNT = 3000000e18;
+    event OrigamiTokenPurchase(address indexed beneficiary, uint256 value, uint256 final_tokens, uint256 initial_tokens, uint256 bonus);
 
-    // TEAM WALLET
-    address private constant ORIGAMI_WALLET = 0x00a8E83bEb15e3f66f9d223118e03d27e4DA86c4;
-
-    // PERIOD WHEN TOKEN IS NOT TRANSFERABLE AFTER THE SALE
-    uint private constant PERIOD_AFTERSALE_NOT_TRANSFERABLE_IN_SEC = 2 minutes;
-
-    event TokenPurchase(address indexed beneficiary, uint256 value, uint256 amount);
-
-
-    function OrigamiTokenSale(uint256 _presaleStartTime, uint256 _presaleEndTime, uint256 _startTime, uint256 _endTime) public
+    function OrigamiTokenSale(uint256 _presaleStartTime, uint256 _presaleEndTime, uint256 _startTime, uint256 _endTime, uint256 _firstWeekEndTime, uint256 _secondWeekEndTime) public
       WhitelistedCrowdsale()
       CappedCrowdsale(HARD_CAP_IN_WEI)
       StandardCrowdsale(_startTime, _endTime, RATE_ETH_ORI, ORIGAMI_WALLET)
@@ -606,13 +612,15 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
         // Get presale start / end time
         presaleStartTime = _presaleStartTime;
         presaleEndTime = _presaleEndTime;
+        firstWeekEndTime = _firstWeekEndTime;
+        secondWeekEndTime = _secondWeekEndTime;
 
         // transfer token to bountry wallet
         token.transfer(BOUNTY_WALLET, BOUNTY_AMOUNT);
     }
     
     /**
-     * 
+     * @dev return if the presale is open
      */
     function preSaleOpen() 
         public
@@ -622,8 +630,8 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
         return (now >= presaleStartTime && now <= presaleEndTime && preSaleWeiRaised < HARD_CAP_IN_WEI_PRESALE);
     }
     
-        /**
-     * 
+    /**
+     * @dev return the sale ended at time
      */
     function preSaleEndedAt() 
         public
@@ -633,8 +641,8 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
         return presaleEndedAt;
     }
     
-        /**
-     * 
+    /**
+     * @dev return if the sale is open
      */
     function saleOpen() 
         public
@@ -644,6 +652,10 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
         return (now >= startTime && now <= endTime);
     }
     
+    /**
+     * @dev get invested amount for an address
+     * @param _address address of the wallet
+     */
     function getInvestedAmount(address _address)
     public
     view
@@ -656,40 +668,34 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
 
     /**
      * @dev Get bonus from an invested amount
-     * @param _tokens token that will be invested
+     * @param _weiAmount weiAmount that will be invested
      */
-    function getBonus(uint256 _tokens)
+    function getBonusFactor(uint256 _weiAmount)
         private view returns(uint256)
     {
         // declaration bonuses
-        //bonus en fonction date
         uint256 bonus = 0;
-        //montant du bonus a donner
-        uint256 final_bonus_amount = 0;
-        
+
         // If presale : bonus 15% otheriwse bonus on volume
         if(now >= presaleStartTime && now <= presaleEndTime) {
             bonus = 15;
         //si week 1 : 10%
         } else {        
-          // 200 ETH (1200000e18)
-          if(_tokens >= 24000e18) {
+          // Bonus 20 % if ETH >= 200
+          if(_weiAmount >= BONUS_TWENTY_AMOUNT) {
               bonus = 20;
           }
-          // 100 ETH (60000e18)
-          else if(_tokens >= 18000e18) {
+          //  Bonus 10 % if ETH >= 100 or first week
+          else if(_weiAmount >= BONUS_TEN_AMOUNT || now <= firstWeekEndTime) {
               bonus = 10;
           }
-          // 50 ETH (30000e18)
-          else if(_tokens >= 12000e18) {
+          // Bonus 10 % if ETH >= 20 or second week
+          else if(_weiAmount >= BONUS_FIVE_AMOUNT || now <= secondWeekEndTime) {
               bonus = 5;
           }
         }
-          
-        // Calculate final bonus amount
-        final_bonus_amount = (_tokens * bonus) / 100;
         
-        return final_bonus_amount;
+        return bonus;
     }
     
     // ORI : token are not mintable, transfer to wallet instead
@@ -704,23 +710,20 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
         uint256 tokens = weiAmount.mul(rate);
 
         //get bonus
-        uint256 bonus = getBonus(tokens);
+        uint256 bonus = getBonusFactor(weiAmount);
         
-        // if presale, add to wei raise by contributor
-        if (preSaleOpen()) {
-            wei_invested_by_contributor_in_presale[msg.sender] =  wei_invested_by_contributor_in_presale[msg.sender].add(weiAmount);          
-        }else if(saleOpen()){
-            wei_invested_by_contributor_in_sale[msg.sender] =  wei_invested_by_contributor_in_sale[msg.sender].add(weiAmount);  
-        }
-
+        // Calculate final bonus amount
+        uint256 final_bonus_amount = (tokens * bonus) / 100;
+        
          // Transfer bonus tokens to buyer and tokens
-        uint256 final_tokens = tokens.add(bonus);
+        uint256 final_tokens = tokens.add(final_bonus_amount);
         // Transfer token with bonus to buyer
         require(token.transfer(msg.sender, final_tokens)); 
-        
-         // Trigger event
-        TokenPurchase(msg.sender, weiAmount, final_tokens);
 
+         // Trigger event
+        OrigamiTokenPurchase(msg.sender, weiAmount, final_tokens, tokens, final_bonus_amount);
+
+        // Forward funds to team wallet
         forwardFunds();
 
         // update state
@@ -728,11 +731,13 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
 
         // If cap reached, set end time to be able to transfer after x days
         if (preSaleOpen()) {
+            wei_invested_by_contributor_in_presale[msg.sender] =  wei_invested_by_contributor_in_presale[msg.sender].add(weiAmount);
             preSaleWeiRaised = preSaleWeiRaised.add(weiAmount);
             if(weiRaised >= HARD_CAP_IN_WEI_PRESALE){
                 presaleEndedAt = now;
             }
         }else{
+            wei_invested_by_contributor_in_sale[msg.sender] =  wei_invested_by_contributor_in_sale[msg.sender].add(weiAmount);  
             if(weiRaised >= HARD_CAP_IN_WEI){
               endTime = now;
             }
@@ -788,11 +793,11 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
         require(hasEnded());
         token.transfer(ORIGAMI_WALLET, token.balanceOf(this));
     }
-
-    // @return true if the transaction can buy tokens
-    function validPurchase() 
-        internal view  
-        returns(bool) 
+    
+    /**
+     * @dev test if the purchase can be operated
+     */
+    function validPurchase () internal view returns(bool) 
     {
         // if presale, add to wei raise by contributor
         if (preSaleOpen()) {
@@ -810,6 +815,11 @@ contract OrigamiTokenSale is Ownable, CappedCrowdsale, WhitelistedCrowdsale {
               return false;
             }
         }else if(saleOpen()){
+            // Test minimum investing for contributor in presale
+            if(msg.value < MINIMUM_INVEST_IN_WEI_SALE){
+                 return false;
+            }
+            
              //Test global invested amount for sale per contributor
              uint256 maxInvestAmountSale = getContributorRemainingSaleAmount(msg.sender);
              if(msg.value > maxInvestAmountSale){
